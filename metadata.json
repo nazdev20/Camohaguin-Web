@@ -1,0 +1,6 @@
+{
+  "name": "Barangay Camohaguin Service Portal",
+  "description": "Official digital service portal for Barangay Camohaguin. Submit and track service requests, appointments, residency verification, announcements, and barangay administration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

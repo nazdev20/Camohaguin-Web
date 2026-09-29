@@ -1,7 +1,11 @@
 import React from 'react';
 import { ShieldCheck, Phone, Mail, MapPin } from 'lucide-react';
 
-export const Footer: React.FC = () => {
+interface FooterProps {
+  onOpenInternalStaff?: () => void;
+}
+
+export const Footer: React.FC<FooterProps> = ({ onOpenInternalStaff }) => {
   return (
     <footer className="bg-slate-900 text-slate-300 border-t border-slate-800 mt-auto text-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -85,12 +89,24 @@ export const Footer: React.FC = () => {
 
         <div className="border-t border-slate-800 mt-8 pt-6 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-500">
           <p>© {new Date().getFullYear()} Barangay Camohaguin, Municipality of Gumaca. All rights reserved.</p>
-          <div className="flex gap-4 mt-2 sm:mt-0 text-[11px]">
+          <div className="flex items-center gap-4 mt-2 sm:mt-0 text-[11px]">
             <span>Transparency Seal</span>
             <span>•</span>
             <span>Citizen's Charter</span>
             <span>•</span>
             <span>Katarungang Pambarangay</span>
+            {onOpenInternalStaff && (
+              <>
+                <span>•</span>
+                <button
+                  onClick={onOpenInternalStaff}
+                  className="text-slate-600 hover:text-slate-400 transition"
+                  title="Internal Barangay Staff Access"
+                >
+                  Internal Staff Access
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

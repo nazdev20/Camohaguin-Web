@@ -7,18 +7,26 @@
 import { query, queryOne } from '../../lib/db';
 import { requireRole } from './auth';
 import { ServiceItem } from '../../types/barangay';
+import { serverLruCache, CacheKeys } from '../../lib/lruCache';
 
 /**
  * Fetch all active services for public display and citizen applications
+ * Cached in server-side LRU cache (10 min TTL)
  */
 export async function getActiveServices(): Promise<ServiceItem[]> {
   try {
-    return await query<ServiceItem>(
-      `SELECT id, name, description, category, fee, processing_days, 
-              requirements, requires_appointment, is_active, created_at
-       FROM barangay.services
-       WHERE is_active = true
-       ORDER BY category ASC, name ASC`
+    return await serverLruCache.wrap(
+      CacheKeys.publicServices(),
+      async () => {
+        return await query<ServiceItem>(
+          `SELECT id, name, description, category, fee, processing_days, 
+                  requirements, requires_appointment, is_active, created_at
+           FROM barangay.services
+           WHERE is_active = true
+           ORDER BY category ASC, name ASC`
+        );
+      },
+      10 * 60 * 1000
     );
   } catch (error) {
     console.error('[services.getActiveServices error]', error);
@@ -41,14 +49,21 @@ export async function getAllServices(): Promise<ServiceItem[]> {
 
 /**
  * Fetch single service details
+ * Cached in server-side LRU cache (10 min TTL)
  */
 export async function getServiceById(serviceId: string): Promise<ServiceItem | null> {
-  return await queryOne<ServiceItem>(
-    `SELECT id, name, description, category, fee, processing_days, 
-            requirements, requires_appointment, is_active
-     FROM barangay.services
-     WHERE id = $1`,
-    [serviceId]
+  return await serverLruCache.wrap(
+    CacheKeys.serviceDetail(serviceId),
+    async () => {
+      return await queryOne<ServiceItem>(
+        `SELECT id, name, description, category, fee, processing_days, 
+                requirements, requires_appointment, is_active
+         FROM barangay.services
+         WHERE id = $1`,
+        [serviceId]
+      );
+    },
+    10 * 60 * 1000
   );
 }
 
@@ -90,6 +105,9 @@ export async function createService(data: {
          VALUES ($1, 'CREATE_SERVICE', 'services', $2, $3)`,
         [session.userId, row.id, JSON.stringify(data)]
       );
+
+      // Invalidate server-side LRU cache for services
+      serverLruCache.invalidatePrefix('services:');
     }
 
     return { success: true, serviceId: row?.id };
@@ -157,6 +175,9 @@ export async function updateService(
        VALUES ($1, 'UPDATE_SERVICE', 'services', $2, $3, $4)`,
       [session.userId, serviceId, JSON.stringify(current), JSON.stringify(data)]
     );
+
+    // Invalidate server-side LRU cache for services
+    serverLruCache.invalidatePrefix('services:');
 
     return { success: true };
   } catch (err: any) {

@@ -44,6 +44,7 @@ import { AdminAnnouncements } from './components/admin/AdminAnnouncements';
 import { AdminDocumentsProjects } from './components/admin/AdminDocumentsProjects';
 import { AdminAuditLogs } from './components/admin/AdminAuditLogs';
 import { GeminiChatbot } from './components/GeminiChatbot';
+import { usePublicServices, usePublicAnnouncements } from './hooks/useBarangayQueries';
 
 export default function App() {
   const [portal, setPortal] = useState<'resident' | 'admin'>('resident');
@@ -69,6 +70,23 @@ export default function App() {
   const [applyingService, setApplyingService] = useState<BarangayService | null>(null);
   const [trackTargetNumber, setTrackTargetNumber] = useState<string>('');
   const [dashboardSelectedRequest, setDashboardSelectedRequest] = useState<ServiceRequest | null>(null);
+
+  // TanStack Query for public services and announcements
+  const { data: queriedServices } = usePublicServices();
+  const { data: queriedAnnouncements } = usePublicAnnouncements(10);
+
+  // Sync TanStack Query cached data into active view
+  useEffect(() => {
+    if (queriedServices && queriedServices.length > 0) {
+      setServices(queriedServices);
+    }
+  }, [queriedServices]);
+
+  useEffect(() => {
+    if (queriedAnnouncements && queriedAnnouncements.length > 0) {
+      setAnnouncements(queriedAnnouncements);
+    }
+  }, [queriedAnnouncements]);
 
   const refreshAllData = () => {
     setAdminsList(BarangayDatabase.getAdmins());

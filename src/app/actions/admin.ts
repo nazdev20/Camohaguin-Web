@@ -7,6 +7,7 @@
 import { query, queryOne } from '../../lib/db';
 import { requireRole } from './auth';
 import { AuditLogItem } from '../../types/barangay';
+import { serverLruCache } from '../../lib/lruCache';
 
 export interface AdminMetrics {
   pendingApplicationsCount: number;
@@ -187,6 +188,9 @@ export async function updateSiteSetting(
        VALUES ($1, 'UPDATE_SITE_SETTING', 'site_settings', $2, $3)`,
       [session.userId, key, JSON.stringify({ value, isPublic })]
     );
+
+    // Invalidate server-side LRU cache for site settings
+    serverLruCache.invalidatePrefix('settings:');
 
     return { success: true };
   } catch (err: any) {

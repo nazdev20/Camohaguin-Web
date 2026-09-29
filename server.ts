@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import { serverLruCache, CacheKeys } from './src/lib/lruCache';
+import { INITIAL_SERVICES, INITIAL_ANNOUNCEMENTS } from './src/services/mockData';
 
 dotenv.config();
 
@@ -139,6 +141,149 @@ app.get('/api/health', (req, res) => {
     hasGeminiKey: !!process.env.GEMINI_API_KEY,
     timestamp: new Date().toISOString(),
   });
+});
+
+// --------------------------------------------------------------------------
+// LRU Cached Public Endpoints
+// - Cache Scope: Public & shared stable data only
+// - Excluded from LRU: Resident PII, requests, appointments, sessions
+// --------------------------------------------------------------------------
+
+// Cache diagnostic & inspection endpoint
+app.get('/api/cache-stats', (req, res) => {
+  const stats = serverLruCache.getStats();
+  res.json({
+    status: 'ok',
+    ...stats,
+  });
+});
+
+// Cache invalidation endpoint (Called upon admin mutations)
+app.post('/api/cache/invalidate', (req, res) => {
+  const { key, prefix } = req.body || {};
+  let invalidatedCount = 0;
+
+  if (prefix) {
+    invalidatedCount = serverLruCache.invalidatePrefix(prefix);
+    console.log(`[LRU Cache Invalidation] Cleared ${invalidatedCount} keys with prefix: "${prefix}"`);
+  } else if (key) {
+    const deleted = serverLruCache.delete(key);
+    invalidatedCount = deleted ? 1 : 0;
+    console.log(`[LRU Cache Invalidation] Cleared key: "${key}"`);
+  } else {
+    serverLruCache.clear();
+    console.log('[LRU Cache Invalidation] Cleared entire cache');
+  }
+
+  res.json({
+    success: true,
+    invalidatedCount,
+    remainingSize: serverLruCache.getStats().size,
+  });
+});
+
+// Public Services (LRU Cached: 10 min TTL)
+app.get('/api/services', async (req, res) => {
+  try {
+    const cacheKey = CacheKeys.publicServices();
+    const isCached = serverLruCache.has(cacheKey);
+
+    const services = await serverLruCache.wrap(
+      cacheKey,
+      async () => {
+        // Return active services from mock or DB
+        return INITIAL_SERVICES;
+      },
+      10 * 60 * 1000 // 10 minutes TTL
+    );
+
+    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
+    res.setHeader('Cache-Control', 'public, max-age=600');
+    res.json({ data: services, source: isCached ? 'lru_cache' : 'database' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch services.' });
+  }
+});
+
+// Public Announcements (LRU Cached: 10 min TTL)
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string, 10) || 10;
+    const cacheKey = CacheKeys.publicAnnouncements(limit);
+    const isCached = serverLruCache.has(cacheKey);
+
+    const announcements = await serverLruCache.wrap(
+      cacheKey,
+      async () => {
+        return INITIAL_ANNOUNCEMENTS.slice(0, limit);
+      },
+      10 * 60 * 1000
+    );
+
+    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json({ data: announcements, source: isCached ? 'lru_cache' : 'database' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch announcements.' });
+  }
+});
+
+// Public Officials Directory (LRU Cached: 10 min TTL)
+app.get('/api/officials', async (req, res) => {
+  try {
+    const cacheKey = CacheKeys.publicOfficials();
+    const isCached = serverLruCache.has(cacheKey);
+
+    const officials = await serverLruCache.wrap(
+      cacheKey,
+      async () => {
+        return [
+          { name: 'Hon. Nelson T. De Chavez', position: 'Punong Barangay', term: '2023-Present' },
+          { name: 'Hon. Maria L. Santos', position: 'Barangay Kagawad - Peace & Order', term: '2023-Present' },
+          { name: 'Hon. Roberto C. Tan', position: 'Barangay Kagawad - Health & Sanitation', term: '2023-Present' },
+          { name: 'Hon. Elena S. Ramos', position: 'Barangay Secretary', term: '2023-Present' },
+          { name: 'Hon. Juan P. Mercado', position: 'Barangay Treasurer', term: '2023-Present' },
+        ];
+      },
+      10 * 60 * 1000
+    );
+
+    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
+    res.json({ data: officials, source: isCached ? 'lru_cache' : 'database' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch officials.' });
+  }
+});
+
+// Site Settings & Hotline (LRU Cached: 10 min TTL)
+app.get('/api/settings', async (req, res) => {
+  try {
+    const cacheKey = CacheKeys.siteSettings();
+    const isCached = serverLruCache.has(cacheKey);
+
+    const settings = await serverLruCache.wrap(
+      cacheKey,
+      async () => {
+        return {
+          barangay_name: 'Barangay Camohaguin',
+          municipality: 'Gumaca',
+          province: 'Quezon',
+          emergency_phone: '(042) 317-8890',
+          office_hours: 'Monday to Friday: 8:00 AM - 5:00 PM',
+          tanod_hotline: '0917-889-1122',
+          police_hotline: '(042) 317-6222',
+          bfp_hotline: '(042) 317-6111',
+          rhu_hotline: '(042) 317-5444',
+        };
+      },
+      10 * 60 * 1000
+    );
+
+    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
+    res.json({ data: settings, source: isCached ? 'lru_cache' : 'database' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch settings.' });
+  }
 });
 
 // Setup Vite middleware in dev or serve static files in production

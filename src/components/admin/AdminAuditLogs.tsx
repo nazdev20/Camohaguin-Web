@@ -2,12 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { BarangayDatabase } from '../../services/db';
 import { AdminUser, AuditLog } from '../../types/schema';
 import { checkSupabaseConnection, SupabaseHealth } from '../../lib/supabase';
-import { History, Shield, RefreshCw, Search, User, Filter, AlertCircle, Database, CheckCircle2, Copy, Check } from 'lucide-react';
+import { History, Shield, RefreshCw, Search, User, Filter, AlertCircle, Database, CheckCircle2, Copy, Check, Cpu, Trash2 } from 'lucide-react';
 
 interface AdminAuditLogsProps {
   auditLogs: AuditLog[];
   activeAdmin: AdminUser;
   onRefresh: () => void;
+}
+
+interface CacheStats {
+  size: number;
+  max: number;
+  hits: number;
+  misses: number;
+  evictions: number;
+  hitRatio: number;
+  keys: string[];
 }
 
 export const AdminAuditLogs: React.FC<AdminAuditLogsProps> = ({
@@ -21,6 +31,9 @@ export const AdminAuditLogs: React.FC<AdminAuditLogsProps> = ({
   const [supabaseHealth, setSupabaseHealth] = useState<SupabaseHealth | null>(null);
   const [checkingSupabase, setCheckingSupabase] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [loadingCacheStats, setLoadingCacheStats] = useState(false);
+  const [invalidationMsg, setInvalidationMsg] = useState<string | null>(null);
 
   const runSupabaseCheck = async () => {
     setCheckingSupabase(true);
@@ -29,8 +42,46 @@ export const AdminAuditLogs: React.FC<AdminAuditLogsProps> = ({
     setCheckingSupabase(false);
   };
 
+  const fetchCacheStats = async () => {
+    setLoadingCacheStats(true);
+    try {
+      const res = await fetch('/api/cache-stats');
+      if (res.ok) {
+        const data = await res.json();
+        setCacheStats(data);
+      }
+    } catch (e) {
+      console.warn('Could not fetch cache stats:', e);
+    } finally {
+      setLoadingCacheStats(false);
+    }
+  };
+
+  const handleInvalidateCache = async (prefix?: string) => {
+    try {
+      const res = await fetch('/api/cache/invalidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prefix ? { prefix } : {}),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInvalidationMsg(
+          prefix
+            ? `Successfully invalidated ${data.invalidatedCount} key(s) with prefix "${prefix}".`
+            : `Entire LRU cache purged (${data.invalidatedCount} keys cleared).`
+        );
+        fetchCacheStats();
+        setTimeout(() => setInvalidationMsg(null), 3500);
+      }
+    } catch (e) {
+      console.error('Invalidation error:', e);
+    }
+  };
+
   useEffect(() => {
     runSupabaseCheck();
+    fetchCacheStats();
   }, []);
 
   const handleResetData = () => {
@@ -142,6 +193,128 @@ export const AdminAuditLogs: React.FC<AdminAuditLogsProps> = ({
             )}
           </div>
         )}
+      </div>
+
+      {/* Server-Side LRU Cache Monitoring & Diagnostics Card */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-800 flex items-center justify-center">
+              <Cpu className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-slate-900 text-sm">Server-Side LRU Caching Layer</h3>
+                <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  Max 500 Entries • 10m TTL
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                In-memory cached public endpoints (services, announcements, officials, settings). User-specific PII & applications bypass cache.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchCacheStats}
+              disabled={loadingCacheStats}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center gap-1.5"
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingCacheStats ? 'animate-spin' : ''}`} />
+              <span>Refresh Stats</span>
+            </button>
+            <button
+              onClick={() => handleInvalidateCache()}
+              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 border border-rose-200"
+            >
+              <Trash2 className="w-3 h-3 text-rose-500" />
+              <span>Purge All</span>
+            </button>
+          </div>
+        </div>
+
+        {invalidationMsg && (
+          <div className="bg-emerald-50 border border-emerald-300 p-2.5 rounded-lg text-xs text-emerald-900">
+            {invalidationMsg}
+          </div>
+        )}
+
+        {/* Cache Performance Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-center">
+            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Active Entries</span>
+            <span className="text-lg font-bold text-slate-800 font-mono">
+              {cacheStats?.size ?? 0} <span className="text-xs font-normal text-slate-400">/ {cacheStats?.max ?? 500}</span>
+            </span>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-center">
+            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Cache Hits</span>
+            <span className="text-lg font-bold text-emerald-600 font-mono">
+              {cacheStats?.hits ?? 0}
+            </span>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-center">
+            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Cache Misses</span>
+            <span className="text-lg font-bold text-amber-600 font-mono">
+              {cacheStats?.misses ?? 0}
+            </span>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-center">
+            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Hit Ratio</span>
+            <span className="text-lg font-bold text-indigo-600 font-mono">
+              {cacheStats ? `${(cacheStats.hitRatio * 100).toFixed(1)}%` : '0%'}
+            </span>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-center">
+            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Evictions</span>
+            <span className="text-lg font-bold text-slate-600 font-mono">
+              {cacheStats?.evictions ?? 0}
+            </span>
+          </div>
+        </div>
+
+        {/* Active Keys & Targeted Invalidation */}
+        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-slate-700">Currently Cached Keys in Memory:</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleInvalidateCache('services:')}
+                className="px-2 py-0.5 text-[10px] font-semibold bg-white border border-slate-200 hover:bg-slate-100 rounded text-slate-700"
+              >
+                Clear services:*
+              </button>
+              <button
+                onClick={() => handleInvalidateCache('announcements:')}
+                className="px-2 py-0.5 text-[10px] font-semibold bg-white border border-slate-200 hover:bg-slate-100 rounded text-slate-700"
+              >
+                Clear announcements:*
+              </button>
+            </div>
+          </div>
+
+          {cacheStats && cacheStats.keys.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {cacheStats.keys.map(k => (
+                <span
+                  key={k}
+                  className="bg-white px-2 py-0.5 rounded border border-slate-200 font-mono text-[11px] text-indigo-900 shadow-2xs"
+                >
+                  {k}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-slate-400 italic text-[11px]">
+              No active entries yet (cache populates automatically as public endpoints are requested).
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Filter and Search */}

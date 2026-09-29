@@ -14,6 +14,7 @@ import {
   Minimize2,
   Maximize2
 } from 'lucide-react';
+import { getOfflineBarangayResponse } from '../services/camohaguinKnowledge';
 
 interface ChatMessage {
   id: string;
@@ -136,36 +137,68 @@ export const GeminiChatbot: React.FC = () => {
     setInput('');
     setIsLoading(true);
 
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: newHistory.map(m => ({ role: m.role, content: m.content })),
-          roleInstruction: selectedPersona.systemPrompt,
-          model: selectedModel,
-        }),
-      });
+    const isGithubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+    const apiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || '';
+    const chatUrl = `${apiBase}/api/chat`;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server responded with status ${response.status}`);
+    try {
+      let replyContent = '';
+      let replyModel: string = selectedModel;
+      let callServerSucceeded = false;
+
+      try {
+        const response = await fetch(chatUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: newHistory.map(m => ({ role: m.role, content: m.content })),
+            roleInstruction: selectedPersona.systemPrompt,
+            model: selectedModel,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          replyContent = data.content;
+          replyModel = data.model || selectedModel;
+          callServerSucceeded = true;
+        } else if (response.status === 404) {
+          console.warn('[Ka-Barangay AI] /api/chat not found (static hosting environment like GitHub Pages). Falling back to Camohaguin Knowledge Engine.');
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Server responded with status ${response.status}`);
+        }
+      } catch (netErr: any) {
+        console.warn('[Ka-Barangay AI] Backend server unreachable, falling back to static knowledge engine:', netErr?.message);
       }
 
-      const data = await response.json();
+      if (!callServerSucceeded) {
+        replyContent = getOfflineBarangayResponse(query, selectedPersona.id);
+        replyModel = isGithubPages ? 'Static Engine (GitHub Pages)' : 'Camohaguin Knowledge Engine';
+      }
 
       const assistantMsg: ChatMessage = {
         id: `bot-${Date.now()}`,
         role: 'assistant',
-        content: data.content,
-        model: data.model || selectedModel,
+        content: replyContent,
+        model: replyModel,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err: any) {
       console.error('[Chatbot Error]:', err);
-      setErrorMsg(err.message || 'Could not connect to Gemini API. Please try again.');
+      const fallback = getOfflineBarangayResponse(query, selectedPersona.id);
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `bot-${Date.now()}`,
+          role: 'assistant',
+          content: fallback,
+          model: 'Camohaguin Knowledge Engine',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -220,7 +253,7 @@ export const GeminiChatbot: React.FC = () => {
                     Ka-Barangay AI
                   </h3>
                   <span className="text-[10px] font-semibold bg-emerald-800/80 text-emerald-200 px-1.5 py-0.2 rounded border border-emerald-700">
-                    24/7 Desk
+                    {typeof window !== 'undefined' && window.location.hostname.includes('github.io') ? 'GitHub Pages' : '24/7 Desk'}
                   </span>
                 </div>
                 <p className="text-[11px] text-emerald-200/80">Barangay Camohaguin, Gumaca</p>

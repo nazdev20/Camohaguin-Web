@@ -568,13 +568,13 @@ export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
                 <div className="flex justify-between">
                   <span>Estimated Processing:</span>
                   <span className="font-semibold text-slate-800">
-                    {service.processing_days === 1 ? '1 Working Day' : `${service.processing_days} Working Days`}
+                    {(service.processing_days ?? 1) === 1 ? '1 Working Day' : `${service.processing_days ?? 1} Working Days`}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Applicable Barangay Fee:</span>
                   <span className="font-bold text-slate-900">
-                    {service.fee_amount === 0 ? 'FREE' : `₱${service.fee_amount.toFixed(2)}`}
+                    {(service.fee_amount ?? 0) === 0 ? 'FREE' : `₱${Number(service.fee_amount ?? 0).toFixed(2)}`}
                   </span>
                 </div>
               </div>

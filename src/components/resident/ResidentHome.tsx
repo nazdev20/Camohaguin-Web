@@ -243,7 +243,7 @@ export const ResidentHome: React.FC<ResidentHomeProps> = ({
                     {service.code}
                   </span>
                   <span className="text-[11px] font-medium text-emerald-700">
-                    {service.processing_days === 1 ? '1 Working Day' : `${service.processing_days} Working Days`}
+                    {(service.processing_days ?? 1) === 1 ? '1 Working Day' : `${service.processing_days ?? 1} Working Days`}
                   </span>
                 </div>
                 <h3 className="font-bold text-slate-900 text-sm mb-1">{service.name}</h3>
@@ -256,7 +256,7 @@ export const ResidentHome: React.FC<ResidentHomeProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-400 block uppercase font-semibold">Barangay Fee</span>
                   <span className="text-xs font-bold text-slate-800">
-                    {service.fee_amount === 0 ? 'FREE' : `₱${service.fee_amount.toFixed(2)}`}
+                    {(service.fee_amount ?? 0) === 0 ? 'FREE' : `₱${Number(service.fee_amount ?? 0).toFixed(2)}`}
                   </span>
                 </div>
                 <button

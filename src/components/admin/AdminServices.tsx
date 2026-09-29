@@ -141,7 +141,7 @@ export const AdminServices: React.FC<AdminServicesProps> = ({ services, onRefres
                 <div className="flex justify-between">
                   <span className="text-slate-400">Official Fee:</span>
                   <span className="font-bold text-slate-900">
-                    {svc.fee_amount === 0 ? 'FREE' : `₱${svc.fee_amount.toFixed(2)}`}
+                    {(svc.fee_amount ?? 0) === 0 ? 'FREE' : `₱${Number(svc.fee_amount ?? 0).toFixed(2)}`}
                   </span>
                 </div>
                 <div className="flex justify-between">

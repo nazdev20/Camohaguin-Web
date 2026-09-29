@@ -49,14 +49,14 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
             <div>
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Document Fee</span>
               <span className="text-sm font-extrabold text-slate-900">
-                {service.fee_amount === 0 ? 'FREE' : `₱${service.fee_amount.toFixed(2)}`}
+                {(service.fee_amount ?? 0) === 0 ? 'FREE' : `₱${Number(service.fee_amount ?? 0).toFixed(2)}`}
               </span>
             </div>
             <div>
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Turnaround Time</span>
               <span className="text-sm font-bold text-slate-900 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-emerald-700" />
-                {service.processing_days === 1 ? '1 Working Day' : `${service.processing_days} Working Days`}
+                {(service.processing_days ?? 1) === 1 ? '1 Working Day' : `${service.processing_days ?? 1} Working Days`}
               </span>
             </div>
             <div className="col-span-2 sm:col-span-1">

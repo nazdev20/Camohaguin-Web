@@ -43,6 +43,7 @@ import { AdminServices } from './components/admin/AdminServices';
 import { AdminAnnouncements } from './components/admin/AdminAnnouncements';
 import { AdminDocumentsProjects } from './components/admin/AdminDocumentsProjects';
 import { AdminAuditLogs } from './components/admin/AdminAuditLogs';
+import { GeminiChatbot } from './components/GeminiChatbot';
 
 export default function App() {
   const [portal, setPortal] = useState<'resident' | 'admin'>('resident');
@@ -272,6 +273,9 @@ export default function App() {
           }}
         />
       )}
+
+      {/* AI Helpdesk Chatbot */}
+      <GeminiChatbot />
 
       {/* Site Footer */}
       <Footer />

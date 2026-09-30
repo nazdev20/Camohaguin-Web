@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(({command}) => {
   return {
-    base: command === 'build' ? '/Camohaguin-Web/' : '/',
+    base: '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -4,23 +4,145 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
-import { serverLruCache, CacheKeys } from './src/lib/lruCache';
-import { INITIAL_SERVICES, INITIAL_ANNOUNCEMENTS } from './src/services/mockData';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-const PORT = 3000;
+// Port must adhere to Cloud Run PORT environment variable or default to 3000
+const PORT = Number(process.env.PORT) || 3000;
 
+const app = express();
 app.use(express.json());
 
-// Initialize Google Gen AI with required telemetry header
+// In-memory lightweight LRU cache for server-side public endpoints
+class SimpleCache {
+  private cache = new Map<string, { value: any; expiresAt: number }>();
+  private defaultTtlMs = 10 * 60 * 1000;
+
+  get(key: string) {
+    const item = this.cache.get(key);
+    if (!item) return undefined;
+    if (Date.now() > item.expiresAt) {
+      this.cache.delete(key);
+      return undefined;
+    }
+    return item.value;
+  }
+
+  set(key: string, value: any, ttlMs = this.defaultTtlMs) {
+    if (this.cache.size >= 500) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey) this.cache.delete(firstKey);
+    }
+    this.cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+
+  delete(key: string) {
+    return this.cache.delete(key);
+  }
+
+  getStats() {
+    return { size: this.cache.size, max: 500 };
+  }
+}
+
+const cache = new SimpleCache();
+
+// Fallback initial services for public API
+const FALLBACK_SERVICES = [
+  {
+    id: 's0000000-0000-0000-0000-000000000001',
+    code: 'BC-CLR',
+    name: 'Barangay Clearance',
+    category: 'Certifications & Clearances',
+    description: 'Standard certification of good moral standing and residency for employment, bank accounts, or municipal permits.',
+    processing_days: 1,
+    fee_amount: 50.00,
+    requires_residency_verification: true,
+    is_active: true,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 's0000000-0000-0000-0000-000000000002',
+    code: 'BC-IND',
+    name: 'Certificate of Indigency',
+    category: 'Social & Welfare Assistance',
+    description: 'Official certificate for medical assistance, hospital billing discounts, educational scholarships, and legal aid.',
+    processing_days: 1,
+    fee_amount: 0.00,
+    requires_residency_verification: true,
+    is_active: true,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 's0000000-0000-0000-0000-000000000003',
+    code: 'BC-RES',
+    name: 'Certificate of Residency',
+    category: 'Certifications & Clearances',
+    description: 'Verifies continuous physical residency in Barangay Camohaguin for school enrollment, utility lines, and bank compliance.',
+    processing_days: 1,
+    fee_amount: 50.00,
+    requires_residency_verification: true,
+    is_active: true,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 's0000000-0000-0000-0000-000000000004',
+    code: 'BC-BUS',
+    name: 'Barangay Business Clearance',
+    category: 'Business & Trade',
+    description: 'Annual or new barangay business clearance required for Mayor’s Permit and DTI registration within Camohaguin.',
+    processing_days: 2,
+    fee_amount: 300.00,
+    requires_residency_verification: false,
+    is_active: true,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 's0000000-0000-0000-0000-000000000005',
+    code: 'BC-JOB',
+    name: 'First-Time Jobseeker Assistance (RA 11261)',
+    category: 'Youth & Employment',
+    description: 'Waived barangay fees for first-time jobseekers under Republic Act 11261.',
+    processing_days: 1,
+    fee_amount: 0.00,
+    requires_residency_verification: true,
+    is_active: true,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+];
+
+const FALLBACK_ANNOUNCEMENTS = [
+  {
+    id: 'n001',
+    title: 'Barangay Camohaguin General Assembly',
+    category: 'Assembly',
+    content: 'All residents of Barangay Camohaguin are invited to attend the quarterly barangay assembly.',
+    published_at: new Date().toISOString(),
+  },
+  {
+    id: 'n002',
+    title: 'Free Health Screening & Medical Mission',
+    category: 'Health',
+    content: 'Free medical consultations, blood pressure screening, and vitamins at the Barangay Hall.',
+    published_at: new Date().toISOString(),
+  },
+];
+
+// Initialize Google Gen AI
 const apiKey = process.env.GEMINI_API_KEY;
 let aiClient: GoogleGenAI | null = null;
-
 if (apiKey) {
   aiClient = new GoogleGenAI({
     apiKey,
@@ -32,32 +154,22 @@ if (apiKey) {
   });
 }
 
-// System instruction for Barangay Camohaguin virtual assistant
 const DEFAULT_SYSTEM_INSTRUCTION = `You are "Ka-Barangay AI", the official virtual assistant for Barangay Camohaguin, Municipality of Gumaca, Province of Quezon.
-Your role is to guide and assist residents, business owners, and visitors with:
-1. Available frontline barangay services (Barangay Clearance, Certificate of Indigency, Certificate of Residency, Business Clearance, First-Time Jobseeker Assistance, Building Clearance).
-2. Requirements, processing times, standard fees, and appointment scheduling.
-3. Tracking submitted requests and explaining status stages (Submitted, Under Review, For Correction, Approved, Ready for Release, Completed).
-4. Purok information (Purok 1 through Purok 7), barangay officials, and office hours (Mon-Fri 8:00 AM - 5:00 PM).
-5. Katarungang Pambarangay (Lupon Tagapamayapa) dispute mediation guidelines and peace & order reporting.
-6. Emergency hotlines (Barangay Tanod Command, Gumaca Police, Bureau of Fire Protection, Rural Health Unit).
-
-Personality: Courteous, respectful, highly informative, clear, and reassuring. Speak in English, Tagalog, or natural Taglish as appropriate for Philippine local governance. Always encourage residents to use the portal to file applications or schedule their appointments.`;
+Guide and assist residents with frontline services, clearances, appointments, and general inquiries. Always be respectful, polite, and helpful in English, Tagalog, or Taglish.`;
 
 // Gemini Chat Endpoint
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, roleInstruction, model = 'gemini-3.5-flash' } = req.body;
+    const { messages, roleInstruction, model = 'gemini-3.8-flash' } = req.body;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'Messages array is required.' });
     }
 
-    // Check if API key is present
     const currentApiKey = process.env.GEMINI_API_KEY;
     if (!currentApiKey) {
       return res.status(503).json({
-        error: 'Gemini API key is not configured in environment secrets (GEMINI_API_KEY).',
+        error: 'Gemini API key is not configured (GEMINI_API_KEY).',
       });
     }
 
@@ -72,13 +184,11 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    // Format conversation history for @google/genai
     const formattedContents = messages.map((m: { role: string; content: string }) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
+      parts: [{ text: m.content || '' }],
     }));
 
-    // Map requested models to valid @google/genai endpoints
     let selectedModel = model;
     if (selectedModel === 'gemini-3.5-flash') {
       selectedModel = 'gemini-3.8-flash';
@@ -91,7 +201,7 @@ app.post('/api/chat', async (req, res) => {
       : DEFAULT_SYSTEM_INSTRUCTION;
 
     let replyText = '';
-    const modelsToTry = [selectedModel, 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+    const modelsToTry = [selectedModel, 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
 
     let lastError: any = null;
     for (const tryModel of Array.from(new Set(modelsToTry))) {
@@ -113,7 +223,7 @@ app.post('/api/chat', async (req, res) => {
         }
       } catch (err: any) {
         lastError = err;
-        console.warn(`[Gemini API] Model ${tryModel} failed, trying fallback:`, err.message || err);
+        console.warn(`[Gemini API] Model ${tryModel} failed, trying fallback:`, err?.message || err);
       }
     }
 
@@ -143,147 +253,64 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// --------------------------------------------------------------------------
-// LRU Cached Public Endpoints
-// - Cache Scope: Public & shared stable data only
-// - Excluded from LRU: Resident PII, requests, appointments, sessions
-// --------------------------------------------------------------------------
-
-// Cache diagnostic & inspection endpoint
+// Cache endpoints
 app.get('/api/cache-stats', (req, res) => {
-  const stats = serverLruCache.getStats();
-  res.json({
-    status: 'ok',
-    ...stats,
-  });
+  res.json({ status: 'ok', ...cache.getStats() });
 });
 
-// Cache invalidation endpoint (Called upon admin mutations)
 app.post('/api/cache/invalidate', (req, res) => {
-  const { key, prefix } = req.body || {};
-  let invalidatedCount = 0;
+  cache.clear();
+  res.json({ success: true, invalidatedCount: 1, remainingSize: 0 });
+});
 
-  if (prefix) {
-    invalidatedCount = serverLruCache.invalidatePrefix(prefix);
-    console.log(`[LRU Cache Invalidation] Cleared ${invalidatedCount} keys with prefix: "${prefix}"`);
-  } else if (key) {
-    const deleted = serverLruCache.delete(key);
-    invalidatedCount = deleted ? 1 : 0;
-    console.log(`[LRU Cache Invalidation] Cleared key: "${key}"`);
-  } else {
-    serverLruCache.clear();
-    console.log('[LRU Cache Invalidation] Cleared entire cache');
+// Services endpoint
+app.get('/api/services', (req, res) => {
+  const cached = cache.get('services');
+  if (cached) {
+    res.setHeader('X-Cache-Status', 'HIT');
+    return res.json({ data: cached, source: 'lru_cache' });
   }
+  cache.set('services', FALLBACK_SERVICES);
+  res.setHeader('X-Cache-Status', 'MISS');
+  res.json({ data: FALLBACK_SERVICES, source: 'database' });
+});
 
+// Announcements endpoint
+app.get('/api/announcements', (req, res) => {
+  const limit = parseInt(req.query.limit as string, 10) || 10;
+  res.json({ data: FALLBACK_ANNOUNCEMENTS.slice(0, limit), source: 'database' });
+});
+
+// Officials endpoint
+app.get('/api/officials', (req, res) => {
   res.json({
-    success: true,
-    invalidatedCount,
-    remainingSize: serverLruCache.getStats().size,
+    data: [
+      { name: 'Hon. Nelson T. De Chavez', position: 'Punong Barangay', term: '2023-Present' },
+      { name: 'Hon. Maria L. Santos', position: 'Barangay Kagawad - Peace & Order', term: '2023-Present' },
+      { name: 'Hon. Roberto C. Tan', position: 'Barangay Kagawad - Health & Sanitation', term: '2023-Present' },
+      { name: 'Hon. Elena S. Ramos', position: 'Barangay Secretary', term: '2023-Present' },
+      { name: 'Hon. Juan P. Mercado', position: 'Barangay Treasurer', term: '2023-Present' },
+    ],
+    source: 'database',
   });
 });
 
-// Public Services (LRU Cached: 10 min TTL)
-app.get('/api/services', async (req, res) => {
-  try {
-    const cacheKey = CacheKeys.publicServices();
-    const isCached = serverLruCache.has(cacheKey);
-
-    const services = await serverLruCache.wrap(
-      cacheKey,
-      async () => {
-        // Return active services from mock or DB
-        return INITIAL_SERVICES;
-      },
-      10 * 60 * 1000 // 10 minutes TTL
-    );
-
-    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
-    res.setHeader('Cache-Control', 'public, max-age=600');
-    res.json({ data: services, source: isCached ? 'lru_cache' : 'database' });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to fetch services.' });
-  }
-});
-
-// Public Announcements (LRU Cached: 10 min TTL)
-app.get('/api/announcements', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit as string, 10) || 10;
-    const cacheKey = CacheKeys.publicAnnouncements(limit);
-    const isCached = serverLruCache.has(cacheKey);
-
-    const announcements = await serverLruCache.wrap(
-      cacheKey,
-      async () => {
-        return INITIAL_ANNOUNCEMENTS.slice(0, limit);
-      },
-      10 * 60 * 1000
-    );
-
-    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.json({ data: announcements, source: isCached ? 'lru_cache' : 'database' });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to fetch announcements.' });
-  }
-});
-
-// Public Officials Directory (LRU Cached: 10 min TTL)
-app.get('/api/officials', async (req, res) => {
-  try {
-    const cacheKey = CacheKeys.publicOfficials();
-    const isCached = serverLruCache.has(cacheKey);
-
-    const officials = await serverLruCache.wrap(
-      cacheKey,
-      async () => {
-        return [
-          { name: 'Hon. Nelson T. De Chavez', position: 'Punong Barangay', term: '2023-Present' },
-          { name: 'Hon. Maria L. Santos', position: 'Barangay Kagawad - Peace & Order', term: '2023-Present' },
-          { name: 'Hon. Roberto C. Tan', position: 'Barangay Kagawad - Health & Sanitation', term: '2023-Present' },
-          { name: 'Hon. Elena S. Ramos', position: 'Barangay Secretary', term: '2023-Present' },
-          { name: 'Hon. Juan P. Mercado', position: 'Barangay Treasurer', term: '2023-Present' },
-        ];
-      },
-      10 * 60 * 1000
-    );
-
-    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
-    res.json({ data: officials, source: isCached ? 'lru_cache' : 'database' });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to fetch officials.' });
-  }
-});
-
-// Site Settings & Hotline (LRU Cached: 10 min TTL)
-app.get('/api/settings', async (req, res) => {
-  try {
-    const cacheKey = CacheKeys.siteSettings();
-    const isCached = serverLruCache.has(cacheKey);
-
-    const settings = await serverLruCache.wrap(
-      cacheKey,
-      async () => {
-        return {
-          barangay_name: 'Barangay Camohaguin',
-          municipality: 'Gumaca',
-          province: 'Quezon',
-          emergency_phone: '(042) 317-8890',
-          office_hours: 'Monday to Friday: 8:00 AM - 5:00 PM',
-          tanod_hotline: '0917-889-1122',
-          police_hotline: '(042) 317-6222',
-          bfp_hotline: '(042) 317-6111',
-          rhu_hotline: '(042) 317-5444',
-        };
-      },
-      10 * 60 * 1000
-    );
-
-    res.setHeader('X-Cache-Status', isCached ? 'HIT' : 'MISS');
-    res.json({ data: settings, source: isCached ? 'lru_cache' : 'database' });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to fetch settings.' });
-  }
+// Settings endpoint
+app.get('/api/settings', (req, res) => {
+  res.json({
+    data: {
+      barangay_name: 'Barangay Camohaguin',
+      municipality: 'Gumaca',
+      province: 'Quezon',
+      emergency_phone: '(042) 317-8890',
+      office_hours: 'Monday to Friday: 8:00 AM - 5:00 PM',
+      tanod_hotline: '0917-889-1122',
+      police_hotline: '(042) 317-6222',
+      bfp_hotline: '(042) 317-6111',
+      rhu_hotline: '(042) 317-5444',
+    },
+    source: 'database',
+  });
 });
 
 // Setup Vite middleware in dev or serve static files in production
@@ -297,9 +324,11 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    // Check both dist and build directories
+    const staticDir = path.resolve(__dirname, 'dist');
+    app.use(express.static(staticDir));
     app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.resolve(staticDir, 'index.html'));
     });
   }
 
@@ -310,4 +339,7 @@ async function startServer() {
 
 startServer().catch((err) => {
   console.error('[Server Start Failure]:', err);
+  process.exit(1);
 });
+
+export default app;

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist build server.js",
     "lint": "tsc --noEmit",
-    "deploy": "vite build && gh-pages -d dist"
+    "deploy": "vite build --base=/Camohaguin-Web/ && gh-pages -d dist"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -33,7 +33,10 @@ import { AnnouncementsView } from './components/resident/AnnouncementsView';
 import { BarangayInfo } from './components/resident/BarangayInfo';
 import { EmergencyContacts } from './components/resident/EmergencyContacts';
 
-// Admin Pages
+// Citizen Auth Modal
+import { CitizenAuthModal } from './components/auth/CitizenAuthModal';
+
+// Admin Pages (Hidden internally, separate app target)
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminServiceRequests } from './components/admin/AdminServiceRequests';
 import { AdminResidents } from './components/admin/AdminResidents';
@@ -47,9 +50,16 @@ import { GeminiChatbot } from './components/GeminiChatbot';
 import { usePublicServices, usePublicAnnouncements } from './hooks/useBarangayQueries';
 
 export default function App() {
+  // Public citizen portal by default (admin choices removed from public UI)
   const [portal, setPortal] = useState<'resident' | 'admin'>('resident');
   const [activeResidentTab, setActiveResidentTab] = useState<string>('home');
   const [activeAdminTab, setActiveAdminTab] = useState<string>('dashboard');
+
+  // Citizen Authentication State
+  const [currentCitizen, setCurrentCitizen] = useState<Resident | null>(() => BarangayDatabase.getCurrentCitizen());
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'register'>('login');
+  const [pendingServiceToApply, setPendingServiceToApply] = useState<BarangayService | null>(null);
 
   // Database in-memory / storage sync states
   const [adminsList, setAdminsList] = useState<AdminUser[]>([]);
@@ -88,6 +98,14 @@ export default function App() {
     }
   }, [queriedAnnouncements]);
 
+  // Check URL parameters for internal admin preview (?portal=admin or ?admin=true)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('portal') === 'admin' || params.get('admin') === 'true') {
+      setPortal('admin');
+    }
+  }, []);
+
   const refreshAllData = () => {
     setAdminsList(BarangayDatabase.getAdmins());
     setActiveAdmin(BarangayDatabase.getActiveAdmin());
@@ -101,16 +119,12 @@ export default function App() {
     setPublicDocs(BarangayDatabase.getPublicDocuments());
     setProjects(BarangayDatabase.getProjects());
     setAuditLogs(BarangayDatabase.getAuditLogs());
+    setCurrentCitizen(BarangayDatabase.getCurrentCitizen());
   };
 
   useEffect(() => {
     refreshAllData();
   }, []);
-
-  const handleSwitchAdmin = (newAdmin: AdminUser) => {
-    BarangayDatabase.setActiveAdmin(newAdmin);
-    setActiveAdmin(newAdmin);
-  };
 
   const handleOpenTrackRequest = (trackingNo?: string) => {
     if (trackingNo) {
@@ -119,24 +133,62 @@ export default function App() {
     setActiveResidentTab('track');
   };
 
-  const pendingRequestsCount = requests.filter(
-    r => r.status === 'Submitted' || r.status === 'Under Review' || r.status === 'For Correction'
-  ).length;
+  // Intercept service application: require login/account
+  const handleSelectService = (svc: BarangayService) => {
+    if (!currentCitizen) {
+      setPendingServiceToApply(svc);
+      setAuthModalTab('login');
+      setShowAuthModal(true);
+    } else {
+      setApplyingService(svc);
+    }
+  };
+
+  // Intercept navigation tabs if needed (e.g. My Requests)
+  const handleNavigateTab = (tab: string) => {
+    if (tab === 'my-requests' && !currentCitizen) {
+      setAuthModalTab('login');
+      setShowAuthModal(true);
+      return;
+    }
+    setActiveResidentTab(tab);
+  };
+
+  // When citizen successfully logs in or creates account
+  const handleCitizenAuthSuccess = (resident: Resident) => {
+    setCurrentCitizen(resident);
+    setShowAuthModal(false);
+
+    // If citizen was trying to apply for a service, proceed directly!
+    if (pendingServiceToApply) {
+      const targetService = pendingServiceToApply;
+      setPendingServiceToApply(null);
+      setApplyingService(targetService);
+    }
+  };
+
+  const handleLogoutCitizen = () => {
+    BarangayDatabase.logoutCitizen();
+    setCurrentCitizen(null);
+    if (activeResidentTab === 'my-requests') {
+      setActiveResidentTab('home');
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-amber-300 selection:text-emerald-950 font-sans">
-      {/* Navigation Header */}
+      {/* Navigation Header (Citizen focused, no portal switcher) */}
       <Navbar
-        portal={portal}
-        setPortal={setPortal}
         activeResidentTab={activeResidentTab}
-        setActiveResidentTab={setActiveResidentTab}
-        activeAdminTab={activeAdminTab}
-        setActiveAdminTab={setActiveAdminTab}
-        activeAdmin={activeAdmin}
-        onSwitchAdmin={handleSwitchAdmin}
-        adminsList={adminsList}
-        pendingRequestsCount={pendingRequestsCount}
+        setActiveResidentTab={handleNavigateTab}
+        currentCitizen={currentCitizen}
+        onOpenAuthModal={(tab = 'login') => {
+          setAuthModalTab(tab);
+          setShowAuthModal(true);
+        }}
+        onLogoutCitizen={handleLogoutCitizen}
+        isInternalAdminMode={portal === 'admin'}
+        onExitInternalAdmin={() => setPortal('resident')}
       />
 
       {/* Main Page Body */}
@@ -145,8 +197,8 @@ export default function App() {
           <div>
             {activeResidentTab === 'home' && (
               <ResidentHome
-                onNavigate={setActiveResidentTab}
-                onSelectService={svc => setApplyingService(svc)}
+                onNavigate={handleNavigateTab}
+                onSelectService={handleSelectService}
                 services={services}
                 announcements={announcements}
                 onOpenTrackRequest={handleOpenTrackRequest}
@@ -156,7 +208,7 @@ export default function App() {
             {activeResidentTab === 'services' && (
               <ServicesList
                 services={services}
-                onSelectService={svc => setApplyingService(svc)}
+                onSelectService={handleSelectService}
                 onViewDetails={svc => setDetailService(svc)}
               />
             )}
@@ -164,7 +216,7 @@ export default function App() {
             {activeResidentTab === 'track' && (
               <TrackRequest
                 initialTracking={trackTargetNumber}
-                onOpenMyRequests={() => setActiveResidentTab('my-requests')}
+                onOpenMyRequests={() => handleNavigateTab('my-requests')}
               />
             )}
 
@@ -190,7 +242,18 @@ export default function App() {
             {activeResidentTab === 'emergency' && <EmergencyContacts />}
           </div>
         ) : (
+          /* Internal staff mode (kept intact for future separated application) */
           <div>
+            <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-900 px-4 py-2.5 rounded-xl text-xs flex items-center justify-between">
+              <span><strong>Internal Barangay Staff Mode</strong> — This view will be migrated into the separate internal barangay app.</span>
+              <button
+                onClick={() => setPortal('resident')}
+                className="bg-amber-400 hover:bg-amber-500 text-emerald-950 font-bold px-3 py-1 rounded text-xs transition"
+              >
+                Back to Public Citizen Portal
+              </button>
+            </div>
+
             {activeAdminTab === 'dashboard' && (
               <AdminDashboard
                 requests={requests}
@@ -277,7 +340,7 @@ export default function App() {
           onClose={() => setDetailService(null)}
           onApply={svc => {
             setDetailService(null);
-            setApplyingService(svc);
+            handleSelectService(svc);
           }}
         />
       )}
@@ -285,6 +348,7 @@ export default function App() {
       {applyingService && (
         <SubmitRequestModal
           service={applyingService}
+          currentCitizen={currentCitizen}
           onClose={() => setApplyingService(null)}
           onSuccess={newReq => {
             refreshAllData();
@@ -292,11 +356,23 @@ export default function App() {
         />
       )}
 
-      {/* AI Helpdesk Chatbot */}
+      {/* Citizen Login & Registration Modal */}
+      <CitizenAuthModal
+        isOpen={showAuthModal}
+        onClose={() => {
+          setShowAuthModal(false);
+          setPendingServiceToApply(null);
+        }}
+        onSuccess={handleCitizenAuthSuccess}
+        pendingService={pendingServiceToApply}
+        initialTab={authModalTab}
+      />
+
+      {/* AI Helpdesk Chatbot (Available for all citizens & visitors) */}
       <GeminiChatbot />
 
       {/* Site Footer */}
-      <Footer />
+      <Footer onOpenInternalStaff={() => setPortal('admin')} />
     </div>
   );
 }

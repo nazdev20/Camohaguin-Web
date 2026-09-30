@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarangayService, ServiceRequest } from '../../types/schema';
+import { BarangayService, Resident, ServiceRequest } from '../../types/schema';
 import { BarangayDatabase } from '../../services/db';
 import { verifyResidencySecurely } from '../../services/residencyVerification';
 import {
@@ -14,30 +14,35 @@ import {
   Copy,
   Check,
   Building,
-  UploadCloud
+  UploadCloud,
+  ShieldCheck
 } from 'lucide-react';
 
 interface SubmitRequestModalProps {
   service: BarangayService | null;
   onClose: () => void;
   onSuccess: (newRequest: ServiceRequest) => void;
+  currentCitizen?: Resident | null;
 }
 
 export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
   service,
   onClose,
   onSuccess,
+  currentCitizen,
 }) => {
   if (!service) return null;
 
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const activeCitizen = currentCitizen || BarangayDatabase.getCurrentCitizen();
+
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(activeCitizen ? 2 : 1);
 
   // Verification step fields
   const [verificationMode, setVerificationMode] = useState<'id' | 'name'>('id');
-  const [residentIdInput, setResidentIdInput] = useState('');
-  const [vFirstName, setVFirstName] = useState('');
-  const [vLastName, setVLastName] = useState('');
-  const [vBirthDate, setVBirthDate] = useState('');
+  const [residentIdInput, setResidentIdInput] = useState(activeCitizen?.resident_id || '');
+  const [vFirstName, setVFirstName] = useState(activeCitizen?.first_name || '');
+  const [vLastName, setVLastName] = useState(activeCitizen?.last_name || '');
+  const [vBirthDate, setVBirthDate] = useState(activeCitizen?.birth_date || '');
   const [verifying, setVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{
     tested: boolean;
@@ -45,20 +50,26 @@ export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
     resident_id?: string;
     purok_zone?: string;
     message: string;
-  }>({ tested: false, is_verified: false, message: '' });
+  }>({
+    tested: !!activeCitizen,
+    is_verified: activeCitizen?.residency_status === 'verified',
+    resident_id: activeCitizen?.resident_id,
+    purok_zone: activeCitizen?.purok_zone,
+    message: activeCitizen ? `Logged in as verified resident (${activeCitizen.purok_zone}).` : '',
+  });
 
   // Applicant form fields
-  const [firstName, setFirstName] = useState('');
-  const [middleName, setMiddleName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [suffix, setSuffix] = useState('');
-  const [contactNumber, setContactNumber] = useState('');
-  const [email, setEmail] = useState('');
-  const [purokZone, setPurokZone] = useState('Purok 1');
-  const [address, setAddress] = useState('');
+  const [firstName, setFirstName] = useState(activeCitizen?.first_name || '');
+  const [middleName, setMiddleName] = useState(activeCitizen?.middle_name || '');
+  const [lastName, setLastName] = useState(activeCitizen?.last_name || '');
+  const [suffix, setSuffix] = useState(activeCitizen?.suffix || '');
+  const [contactNumber, setContactNumber] = useState(activeCitizen?.contact_number || '');
+  const [email, setEmail] = useState(activeCitizen?.email || '');
+  const [purokZone, setPurokZone] = useState(activeCitizen?.purok_zone || 'Purok 1');
+  const [address, setAddress] = useState(activeCitizen?.address || '');
   const [purpose, setPurpose] = useState('');
-  const [residentId, setResidentId] = useState<string | undefined>(undefined);
-  const [residencyVerified, setResidencyVerified] = useState(false);
+  const [residentId, setResidentId] = useState<string | undefined>(activeCitizen?.resident_id);
+  const [residencyVerified, setResidencyVerified] = useState(activeCitizen?.residency_status === 'verified');
 
   // Requirements checklist confirmation
   const [requirementsConfirmed, setRequirementsConfirmed] = useState<Record<string, boolean>>({});
@@ -568,13 +579,13 @@ export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
                 <div className="flex justify-between">
                   <span>Estimated Processing:</span>
                   <span className="font-semibold text-slate-800">
-                    {service.processing_days === 1 ? '1 Working Day' : `${service.processing_days} Working Days`}
+                    {(service.processing_days ?? 1) === 1 ? '1 Working Day' : `${service.processing_days ?? 1} Working Days`}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Applicable Barangay Fee:</span>
                   <span className="font-bold text-slate-900">
-                    {service.fee_amount === 0 ? 'FREE' : `₱${service.fee_amount.toFixed(2)}`}
+                    {(service.fee_amount ?? 0) === 0 ? 'FREE' : `₱${Number(service.fee_amount ?? 0).toFixed(2)}`}
                   </span>
                 </div>
               </div>

@@ -25,7 +25,7 @@ export async function verifyResidencySecurely(params: {
     const queryId = params.resident_id.trim().toUpperCase();
     const match = residents.find(r => r.resident_id.toUpperCase() === queryId);
 
-    if (!match) {
+    if (!match) { 
       return {
         is_verified: false,
         message: 'No resident record found with this Resident System ID.',

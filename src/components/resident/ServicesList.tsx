@@ -132,10 +132,10 @@ export const ServicesList: React.FC<ServicesListProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-400 block uppercase font-bold">Barangay Fee</span>
                   <span className="text-sm font-extrabold text-slate-900">
-                    {service.fee_amount === 0 ? (
+                    {(service.fee_amount ?? 0) === 0 ? (
                       <span className="text-emerald-700 font-bold">FREE (No Charge)</span>
                     ) : (
-                      `₱${service.fee_amount.toFixed(2)}`
+                      `₱${Number(service.fee_amount ?? 0).toFixed(2)}`
                     )}
                   </span>
                 </div>
@@ -144,7 +144,7 @@ export const ServicesList: React.FC<ServicesListProps> = ({
                   <span className="text-[10px] text-slate-400 block uppercase font-bold">Processing Time</span>
                   <span className="text-xs font-semibold text-slate-700 flex items-center gap-1 justify-end">
                     <Clock className="w-3 h-3 text-slate-400" />
-                    {service.processing_days === 1 ? '1 Working Day' : `${service.processing_days} Working Days`}
+                    {(service.processing_days ?? 1) === 1 ? '1 Working Day' : `${service.processing_days ?? 1} Working Days`}
                   </span>
                 </div>
               </div>

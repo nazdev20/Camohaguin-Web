@@ -39,6 +39,7 @@ const STORAGE_KEYS = {
   ADMINS: 'bc_admins_v1',
   AUDIT_LOGS: 'bc_audit_logs_v1',
   ACTIVE_ADMIN: 'bc_active_admin_v1',
+  CURRENT_CITIZEN: 'bc_current_citizen_v1',
 };
 
 function getStorage<T>(key: string, defaultValue: T): T {
@@ -335,6 +336,148 @@ export class BarangayDatabase {
     return getStorage<Project[]>(STORAGE_KEYS.PROJECTS, INITIAL_PROJECTS);
   }
 
+  // --- Citizen User Authentication ---
+  static getCurrentCitizen(): Resident | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_CITIZEN);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  static setCurrentCitizen(resident: Resident | null): void {
+    if (resident) {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_CITIZEN, JSON.stringify(resident));
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_CITIZEN);
+    }
+  }
+
+  static logoutCitizen(): void {
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_CITIZEN);
+  }
+
+  static loginCitizen(
+    identifier: string,
+    _passwordOrDob?: string
+  ): { success: boolean; resident?: Resident; message: string } {
+    const cleanId = identifier.trim().toLowerCase();
+    const residents = this.getResidents();
+
+    // Match by email, contact number, or resident_id
+    const match = residents.find(r => 
+      (r.email && r.email.toLowerCase() === cleanId) ||
+      (r.contact_number && r.contact_number.replace(/\D/g, '') === cleanId.replace(/\D/g, '')) ||
+      r.resident_id.toLowerCase() === cleanId ||
+      `${r.first_name} ${r.last_name}`.toLowerCase() === cleanId
+    );
+
+    if (!match) {
+      return {
+        success: false,
+        message: 'No resident account found with that email, phone number, or Resident ID. Please register if you are new.',
+      };
+    }
+
+    this.setCurrentCitizen(match);
+    this.addAuditLog('CITIZEN_LOGIN', 'residents', match.resident_id, {
+      name: `${match.first_name} ${match.last_name}`,
+      method: 'portal_login',
+    });
+
+    return {
+      success: true,
+      resident: match,
+      message: `Welcome back, ${match.first_name}! You are now logged in.`,
+    };
+  }
+
+  static registerCitizen(data: {
+    first_name: string;
+    middle_name?: string;
+    last_name: string;
+    suffix?: string;
+    birth_date: string;
+    gender?: string;
+    contact_number: string;
+    email: string;
+    address: string;
+    purok_zone: string;
+  }): { success: boolean; resident: Resident; message: string } {
+    const residents = this.getResidents();
+
+    // Check if citizen matches an existing resident in Camohaguin registry (by First Name + Last Name + DOB)
+    const existing = residents.find(r =>
+      r.first_name.trim().toLowerCase() === data.first_name.trim().toLowerCase() &&
+      r.last_name.trim().toLowerCase() === data.last_name.trim().toLowerCase() &&
+      r.birth_date === data.birth_date
+    );
+
+    if (existing) {
+      // Update contact details and log in as verified resident
+      const updated: Resident = {
+        ...existing,
+        contact_number: data.contact_number || existing.contact_number,
+        email: data.email || existing.email,
+        address: data.address || existing.address,
+        purok_zone: data.purok_zone || existing.purok_zone,
+        updated_at: new Date().toISOString(),
+      };
+      const updatedList = residents.map(r => r.resident_id === existing.resident_id ? updated : r);
+      setStorage(STORAGE_KEYS.RESIDENTS, updatedList);
+      this.setCurrentCitizen(updated);
+      this.addAuditLog('CITIZEN_REGISTER_LINKED', 'residents', updated.resident_id, {
+        name: `${updated.first_name} ${updated.last_name}`,
+        status: updated.residency_status,
+      });
+
+      return {
+        success: true,
+        resident: updated,
+        message: `Matched with existing Barangay Camohaguin Registry. Your account is verified (${updated.purok_zone})!`,
+      };
+    }
+
+    // Create new resident record
+    const newId = `BC-RES-00${100 + residents.length + 1}`;
+    const newResident: Resident = {
+      resident_id: newId,
+      household_id: `h-custom-${Date.now().toString(36)}`,
+      first_name: data.first_name.trim(),
+      middle_name: data.middle_name?.trim() || undefined,
+      last_name: data.last_name.trim(),
+      suffix: data.suffix?.trim() || undefined,
+      birth_date: data.birth_date,
+      gender: (data.gender as 'Male' | 'Female' | 'Other') || 'Other',
+      civil_status: 'Single',
+      contact_number: data.contact_number.trim(),
+      email: data.email.trim(),
+      address: data.address.trim(),
+      purok_zone: data.purok_zone,
+      is_registered_voter: false,
+      residency_status: 'verified', // Pre-verify user registrations so they can immediately request clearances
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      remarks: 'Self-registered via Citizen Public Portal.',
+    };
+
+    residents.push(newResident);
+    setStorage(STORAGE_KEYS.RESIDENTS, residents);
+    this.setCurrentCitizen(newResident);
+    this.addAuditLog('CITIZEN_REGISTER_NEW', 'residents', newResident.resident_id, {
+      name: `${newResident.first_name} ${newResident.last_name}`,
+      purok: newResident.purok_zone,
+    });
+
+    return {
+      success: true,
+      resident: newResident,
+      message: `Account created successfully! Welcome to Barangay Camohaguin Citizen Portal, ${newResident.first_name}.`,
+    };
+  }
+
   // Reset demo data helper
   static resetToDefaultData(): void {
     localStorage.removeItem(STORAGE_KEYS.RESIDENTS);
@@ -349,5 +492,6 @@ export class BarangayDatabase {
     localStorage.removeItem(STORAGE_KEYS.ADMINS);
     localStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_ADMIN);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_CITIZEN);
   }
 }

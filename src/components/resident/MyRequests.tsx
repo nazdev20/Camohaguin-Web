@@ -31,10 +31,26 @@ export const MyRequests: React.FC<MyRequestsProps> = ({
     }
   }, []);
 
+  const currentCitizen = BarangayDatabase.getCurrentCitizen();
   const allRequests = BarangayDatabase.getRequests();
-  const myRequestsList: ServiceRequest[] = cachedTrackingNumbers
+
+  const citizenRequests = currentCitizen
+    ? allRequests.filter(
+        r =>
+          (r.resident_id && r.resident_id === currentCitizen.resident_id) ||
+          (currentCitizen.email && r.applicant_email?.toLowerCase() === currentCitizen.email.toLowerCase()) ||
+          (r.applicant_first_name.toLowerCase() === currentCitizen.first_name.toLowerCase() &&
+            r.applicant_last_name.toLowerCase() === currentCitizen.last_name.toLowerCase())
+      )
+    : [];
+
+  const deviceRequests = cachedTrackingNumbers
     .map(t => allRequests.find(r => r.tracking_number.toUpperCase() === t.toUpperCase()))
     .filter((r): r is ServiceRequest => r !== undefined);
+
+  const combinedMap = new Map<string, ServiceRequest>();
+  [...citizenRequests, ...deviceRequests].forEach(r => combinedMap.set(r.tracking_number, r));
+  const myRequestsList = Array.from(combinedMap.values());
 
   const handleAddManual = (e: React.FormEvent) => {
     e.preventDefault();

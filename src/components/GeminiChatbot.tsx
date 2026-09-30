@@ -138,8 +138,7 @@ export const GeminiChatbot: React.FC = () => {
     setIsLoading(true);
 
     const isGithubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
-    const apiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || '';
-    const chatUrl = `${apiBase}/api/chat`;
+    const chatUrl = '/api/chat';
 
     try {
       let replyContent = '';

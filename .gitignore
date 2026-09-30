@@ -1,5 +1,8 @@
 node_modules/
 coverage/
+.next/
+generated/prisma/
+*.tsbuildinfo
 .DS_Store
 *.log
 .env*

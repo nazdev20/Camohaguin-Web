@@ -1,71 +1,42 @@
-/**
- * Database connection pool & query helpers
- * Target: PostgreSQL (Schema: barangay, public)
- */
+import { getPrisma } from './prisma';
 
-import { Pool, PoolClient, QueryResultRow } from 'pg';
-
-// Global pool instance to prevent multiple connection pools during hot reloads
-declare global {
-  // eslint-disable-next-line no-var
-  var __barangayDbPool: Pool | undefined;
+interface SqlExecutor {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: any[]): Promise<T>;
+  $executeRawUnsafe(query: string, ...values: any[]): Promise<number>;
 }
 
-const connectionString = process.env.DATABASE_URL;
+interface QueryResult<T> {
+  rows: T[];
+  rowCount: number;
+}
 
-function createPool(): Pool {
-  if (!connectionString) {
-    console.warn(
-      '[barangay-db] Warning: DATABASE_URL is not set. Database operations requiring connection will fail until configured.'
-    );
+async function runQuery<T>(
+  executor: SqlExecutor,
+  sql: string,
+  params: any[] = [],
+): Promise<QueryResult<T>> {
+  const returnsRows = /^(SELECT|WITH|VALUES|SHOW|EXPLAIN)\b/i.test(sql.trim()) ||
+    /\bRETURNING\b/i.test(sql);
+
+  if (returnsRows) {
+    const rows = await executor.$queryRawUnsafe<T[]>(sql, ...params);
+    return { rows, rowCount: rows.length };
   }
 
-  // Detect SSL requirement for cloud-hosted PostgreSQL/Supabase
-  const isCloudPostgres = connectionString?.includes('supabase') ||
-    connectionString?.includes('neon.tech') ||
-    connectionString?.includes('render.com') ||
-    process.env.NODE_ENV === 'production';
-
-  const pool = new Pool({
-    connectionString: connectionString || 'postgresql://postgres:postgres@localhost:5432/barangay_db',
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
-    ssl: isCloudPostgres ? { rejectUnauthorized: false } : undefined,
-  });
-
-  // Automatically set search_path on each newly acquired client
-  pool.on('connect', (client: PoolClient) => {
-    client.query('SET search_path TO barangay, public', (err) => {
-      if (err) {
-        console.error('[barangay-db] Failed to set search_path to barangay, public:', err.message);
-      }
-    });
-  });
-
-  pool.on('error', (err: Error) => {
-    console.error('[barangay-db] Unexpected error on idle database client:', err.message);
-  });
-
-  return pool;
-}
-
-export const pool = globalThis.__barangayDbPool || createPool();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalThis.__barangayDbPool = pool;
+  const rowCount = await executor.$executeRawUnsafe(sql, ...params);
+  return { rows: [], rowCount };
 }
 
 /**
  * Execute a parameterized query returning all matching rows typed as T[]
  */
-export async function query<T extends QueryResultRow = any>(
+export async function query<T = any>(
   sql: string,
-  params: any[] = []
+  params: any[] = [],
 ): Promise<T[]> {
   const start = Date.now();
   try {
-    const result = await pool.query<T>(sql, params);
+    const result = await runQuery<T>(getPrisma(), sql, params);
     const duration = Date.now() - start;
     if (process.env.DEBUG_SQL === 'true') {
       console.log(`[SQL ${duration}ms] ${sql.trim().replace(/\s+/g, ' ')}`);
@@ -74,7 +45,6 @@ export async function query<T extends QueryResultRow = any>(
   } catch (error: any) {
     console.error('[barangay-db query error]', {
       sql,
-      params,
       message: error?.message,
     });
     throw error;
@@ -84,9 +54,9 @@ export async function query<T extends QueryResultRow = any>(
 /**
  * Execute a parameterized query returning the first matching row or null
  */
-export async function queryOne<T extends QueryResultRow = any>(
+export async function queryOne<T = any>(
   sql: string,
-  params: any[] = []
+  params: any[] = [],
 ): Promise<T | null> {
   const rows = await query<T>(sql, params);
   return rows.length > 0 ? rows[0] : null;
@@ -96,25 +66,20 @@ export async function queryOne<T extends QueryResultRow = any>(
  * Execute operations within an atomic database transaction
  */
 export async function withTransaction<T>(
-  callback: (client: PoolClient) => Promise<T>
+  callback: (client: {
+    query<T = any>(
+      sql: string,
+      params?: any[],
+    ): Promise<QueryResult<T>>;
+  }) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('SET search_path TO barangay, public');
-    await client.query('BEGIN');
-    const result = await callback(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error('[barangay-db] Rollback failed:', rollbackError);
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
+  return getPrisma().$transaction(
+    transaction => callback({
+      query: <Row = any>(sql: string, params: any[] = []) =>
+        runQuery<Row>(transaction, sql, params),
+    }),
+    { timeout: 15_000 },
+  );
 }
 
 /**

@@ -4,66 +4,20 @@
  */
 
 import { SignJWT, jwtVerify } from 'jose';
+import 'server-only';
+import { cookies } from 'next/headers';
 import { SessionPayload, UserRoleName } from '../types/barangay';
 
 export const SESSION_COOKIE_NAME = 'barangay_session_token';
 const DEFAULT_EXPIRATION_TIME = '7d';
 const MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
-// Encode symmetric signing key
-const secretKey = new TextEncoder().encode(
-  (typeof process !== 'undefined' && process.env?.SESSION_SECRET) ||
-  'camohaguin-barangay-jwt-secure-secret-key-32-chars-min!!'
-);
-
-/**
- * Universal Cookie Storage Helper
- * Adapts to browser document.cookie and server environments without requiring next/headers
- */
-class UniversalCookieStore {
-  private inMemory: Map<string, string> = new Map();
-
-  get(name: string): { name: string; value: string } | undefined {
-    if (typeof document !== 'undefined') {
-      const match = document.cookie
-        .split('; ')
-        .find(row => row.startsWith(`${encodeURIComponent(name)}=`));
-      if (match) {
-        return { name, value: decodeURIComponent(match.split('=')[1]) };
-      }
-    }
-    const val = this.inMemory.get(name);
-    return val ? { name, value: val } : undefined;
+function getSecretKey(): Uint8Array {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('SESSION_SECRET must be set to at least 32 characters.');
   }
-
-  set(
-    name: string,
-    value: string,
-    options?: { maxAge?: number; path?: string; secure?: boolean; httpOnly?: boolean; sameSite?: string }
-  ): void {
-    this.inMemory.set(name, value);
-    if (typeof document !== 'undefined') {
-      let cookieStr = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
-      if (options?.maxAge) cookieStr += `; max-age=${options.maxAge}`;
-      cookieStr += `; path=${options?.path || '/'}`;
-      if (options?.secure) cookieStr += '; secure';
-      if (options?.sameSite) cookieStr += `; samesite=${options.sameSite}`;
-      document.cookie = cookieStr;
-    }
-  }
-
-  delete(name: string): void {
-    this.inMemory.delete(name);
-    if (typeof document !== 'undefined') {
-      document.cookie = `${encodeURIComponent(name)}=; max-age=0; path=/`;
-    }
-  }
-}
-
-const cookieStoreInstance = new UniversalCookieStore();
-
-export async function cookies(): Promise<UniversalCookieStore> {
-  return cookieStoreInstance;
+  return new TextEncoder().encode(secret);
 }
 
 /**
@@ -74,7 +28,7 @@ export async function encryptSession(payload: SessionPayload): Promise<string> {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(DEFAULT_EXPIRATION_TIME)
-    .sign(secretKey);
+    .sign(getSecretKey());
 }
 
 /**
@@ -82,7 +36,7 @@ export async function encryptSession(payload: SessionPayload): Promise<string> {
  */
 export async function decryptSession(token: string): Promise<SessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, secretKey, {
+    const { payload } = await jwtVerify(token, getSecretKey(), {
       algorithms: ['HS256'],
     });
 
@@ -107,10 +61,9 @@ export async function decryptSession(token: string): Promise<SessionPayload | nu
 export async function createSessionCookie(payload: SessionPayload): Promise<string> {
   const token = await encryptSession(payload);
   const store = await cookies();
-
   store.set(SESSION_COOKIE_NAME, token, {
-    httpOnly: false, // Accessible in browser client
-    secure: typeof process !== 'undefined' && process.env?.NODE_ENV === 'production',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: MAX_AGE_SECONDS,
     path: '/',
@@ -124,8 +77,7 @@ export async function createSessionCookie(payload: SessionPayload): Promise<stri
  */
 export async function getSessionFromCookie(): Promise<SessionPayload | null> {
   try {
-    const store = await cookies();
-    const token = store.get(SESSION_COOKIE_NAME)?.value;
+    const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
     if (!token) return null;
     return await decryptSession(token);
   } catch {
@@ -138,8 +90,7 @@ export async function getSessionFromCookie(): Promise<SessionPayload | null> {
  */
 export async function deleteSessionCookie(): Promise<void> {
   try {
-    const store = await cookies();
-    store.delete(SESSION_COOKIE_NAME);
+    (await cookies()).delete(SESSION_COOKIE_NAME);
   } catch (err) {
     console.error('[session] Error deleting session cookie:', err);
   }

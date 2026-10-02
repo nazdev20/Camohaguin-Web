@@ -78,6 +78,7 @@ export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
   // Created request state for Step 4
   const [createdRequest, setCreatedRequest] = useState<ServiceRequest | null>(null);
   const [copiedTracking, setCopiedTracking] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Handle Verify Residency
   const handleCheckResidency = async () => {
@@ -136,51 +137,84 @@ export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
   };
 
   // Submit final request
-  const handleSubmitFinal = (e: React.FormEvent) => {
+  const handleSubmitFinal = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
 
-    const newReq = BarangayDatabase.createRequest({
-      service_id: service.id,
-      service_name: service.name,
-      resident_id: residencyVerified ? residentId : undefined,
-      applicant_first_name: firstName.trim(),
-      applicant_middle_name: middleName.trim() || undefined,
-      applicant_last_name: lastName.trim(),
-      applicant_suffix: suffix.trim() || undefined,
-      applicant_contact: contactNumber.trim(),
-      applicant_email: email.trim() || undefined,
-      purok_zone: purokZone,
-      address: address.trim(),
-      purpose: purpose.trim(),
-      residency_verified: residencyVerified,
-      status: 'Submitted',
-      admin_remarks: 'Application submitted via Online Resident Portal.',
-      target_release_date: new Date(Date.now() + service.processing_days * 86400000).toISOString().split('T')[0],
-      documents: Object.keys(simulatedFiles).map((reqId, idx) => ({
-        id: `doc-${Date.now()}-${idx}`,
-        request_tracking_number: '',
-        requirement_id: reqId,
-        document_name: simulatedFiles[reqId],
-        file_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop&q=60',
-        uploaded_at: new Date().toISOString(),
-        is_verified: false,
-      })),
-    });
-
-    // Save tracking number to local browser cache for "My Requests"
     try {
-      const myReqs = JSON.parse(localStorage.getItem('bc_my_requests') || '[]');
-      if (!myReqs.includes(newReq.tracking_number)) {
-        myReqs.unshift(newReq.tracking_number);
-        localStorage.setItem('bc_my_requests', JSON.stringify(myReqs));
-      }
-    } catch (e) {
-      console.warn('Could not save to my_requests cache', e);
-    }
+      const response = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serviceId: service.id,
+          purpose: purpose.trim(),
+          applicantNotes: `${address.trim()} | ${purokZone}`,
+          priority: 'standard',
+          residentId: residencyVerified ? residentId : undefined,
+          documents: Object.keys(simulatedFiles).map((reqId, idx) => ({
+            documentType: reqId,
+            fileName: simulatedFiles[reqId],
+            filePath: `uploads/${simulatedFiles[reqId]}`,
+            id: `doc-${Date.now()}-${idx}`,
+          })),
+        }),
+      });
 
-    setCreatedRequest(newReq);
-    setStep(4);
-    onSuccess(newReq);
+      const payload = await response.json();
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error || 'The request could not be submitted to the database.');
+      }
+
+      const trackingNumber = payload?.data?.trackingNumber || `BC-${new Date().getFullYear()}-${Date.now()}`;
+      const newReq: ServiceRequest = {
+        tracking_number: trackingNumber,
+        service_id: service.id,
+        service_name: service.name,
+        resident_id: residencyVerified ? residentId : undefined,
+        applicant_first_name: firstName.trim(),
+        applicant_middle_name: middleName.trim() || undefined,
+        applicant_last_name: lastName.trim(),
+        applicant_suffix: suffix.trim() || undefined,
+        applicant_contact: contactNumber.trim(),
+        applicant_email: email.trim() || undefined,
+        purok_zone: purokZone,
+        address: address.trim(),
+        purpose: purpose.trim(),
+        residency_verified: residencyVerified,
+        status: 'Submitted',
+        admin_remarks: 'Application submitted via Online Resident Portal.',
+        target_release_date: new Date(Date.now() + service.processing_days * 86400000).toISOString().split('T')[0],
+        documents: Object.keys(simulatedFiles).map((reqId, idx) => ({
+          id: `doc-${Date.now()}-${idx}`,
+          request_tracking_number: trackingNumber,
+          requirement_id: reqId,
+          document_name: simulatedFiles[reqId],
+          file_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop&q=60',
+          uploaded_at: new Date().toISOString(),
+          is_verified: false,
+        })),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      try {
+        const myReqs = JSON.parse(localStorage.getItem('bc_my_requests') || '[]');
+        if (!myReqs.includes(trackingNumber)) {
+          myReqs.unshift(trackingNumber);
+          localStorage.setItem('bc_my_requests', JSON.stringify(myReqs));
+        }
+      } catch (e) {
+        console.warn('Could not save to my_requests cache', e);
+      }
+
+      setCreatedRequest(newReq);
+      setStep(4);
+      onSuccess(newReq);
+    } catch (error: any) {
+      console.error('[SubmitRequestModal] submission failed', error);
+      setSubmitError(error?.message || 'The request could not be submitted.');
+    }
   };
 
   const handleCopyTracking = () => {
@@ -519,6 +553,16 @@ export const SubmitRequestModal: React.FC<SubmitRequestModalProps> = ({
               </div>
 
               {/* Requirement Checklist */}
+              {submitError && (
+                <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 text-xs">
+                  <div className="font-bold flex items-center gap-1.5 mb-1">
+                    <AlertCircle className="w-4 h-4" />
+                    Submission failed
+                  </div>
+                  <p>{submitError}</p>
+                </div>
+              )}
+
               <div>
                 <h4 className="text-xs font-bold text-slate-800 mb-2 uppercase tracking-wide">
                   Requirements & Supporting Documents

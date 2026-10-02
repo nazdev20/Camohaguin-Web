@@ -26,22 +26,9 @@ export interface AuthActionResult<T = any> {
 }
 
 export interface RegisterResidentInput {
+  residentId: string;
   email: string;
   password: string;
-  // Resident personal profile fields
-  firstName: string;
-  middleName?: string;
-  lastName: string;
-  suffix?: string;
-  dateOfBirth: string; // YYYY-MM-DD
-  sex: 'male' | 'female' | 'other';
-  civilStatus: 'single' | 'married' | 'widowed' | 'separated';
-  contactNumber?: string;
-  purok: string;
-  streetAddress: string;
-  primaryIdType?: string;
-  primaryIdNumber?: string;
-  isVoter?: boolean;
 }
 
 /**
@@ -174,85 +161,68 @@ export async function login(
 export async function registerResident(
   input: RegisterResidentInput
 ): Promise<AuthActionResult<{ user: SessionPayload; residentId: string }>> {
+  const residentId = input.residentId.trim();
   const email = input.email.trim().toLowerCase();
+
+  if (!residentId) {
+    return { success: false, error: 'Resident ID is required.' };
+  }
+
+  if (!email) {
+    return { success: false, error: 'Email address is required.' };
+  }
 
   try {
     return await withTransaction(async (client) => {
-      // 1. Check if email already exists
+      const resident = await client.query(
+        `SELECT id, email_address, first_name, last_name
+         FROM barangay.residents
+         WHERE id = $1`,
+        [residentId]
+      );
+
+      if (resident.rows.length === 0) {
+        return {
+          success: false,
+          error: 'Resident ID was not found in the barangay resident registry.',
+        };
+      }
+
+      const residentRecord = resident.rows[0];
+      const residentEmail = (residentRecord.email_address || '').trim().toLowerCase();
+
+      if (!residentEmail) {
+        return {
+          success: false,
+          error: 'This resident profile does not have an email address on file. Please update the resident record first.',
+        };
+      }
+
+      if (residentEmail !== email) {
+        return {
+          success: false,
+          error: 'The email you entered does not match the email recorded for this resident profile.',
+        };
+      }
+
       const existingUser = await client.query(
-        `SELECT id FROM barangay.users WHERE LOWER(email) = $1`,
-        [email]
+        `SELECT id FROM barangay.users WHERE LOWER(email) = $1 OR resident_id = $2`,
+        [email, residentId]
       );
       if (existingUser.rows.length > 0) {
         return {
           success: false,
-          error: 'An account with this email address already exists. Please log in instead.',
+          error: 'An account already exists for this resident ID or email address.',
         };
       }
 
-      // 2. Check if a resident civil record already matches this individual
-      // (Match by name and date of birth)
-      let residentId: string;
-      const existingResident = await client.query(
-        `SELECT id FROM barangay.residents
-         WHERE LOWER(TRIM(first_name)) = LOWER(TRIM($1))
-           AND LOWER(TRIM(last_name)) = LOWER(TRIM($2))
-           AND date_of_birth = $3`,
-        [input.firstName, input.lastName, input.dateOfBirth]
-      );
-
-      if (existingResident.rows.length > 0) {
-        residentId = existingResident.rows[0].id;
-        // Update contact info if provided
-        await client.query(
-          `UPDATE barangay.residents
-           SET contact_number = COALESCE($1, contact_number),
-               email_address = COALESCE($2, email_address),
-               street_address = COALESCE($3, street_address),
-               purok = COALESCE($4, purok)
-           WHERE id = $5`,
-          [input.contactNumber || null, email, input.streetAddress, input.purok, residentId]
-        );
-      } else {
-        // Insert new resident record
-        const insertResident = await client.query(
-          `INSERT INTO barangay.residents (
-            first_name, middle_name, last_name, suffix,
-            date_of_birth, sex, civil_status, contact_number,
-            email_address, purok, street_address, primary_id_type,
-            primary_id_number, is_voter, is_active, residency_status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, 'unverified')
-          RETURNING id`,
-          [
-            input.firstName.trim(),
-            input.middleName?.trim() || null,
-            input.lastName.trim(),
-            input.suffix?.trim() || null,
-            input.dateOfBirth,
-            input.sex,
-            input.civilStatus,
-            input.contactNumber?.trim() || null,
-            email,
-            input.purok,
-            input.streetAddress.trim(),
-            input.primaryIdType?.trim() || null,
-            input.primaryIdNumber?.trim() || null,
-            input.isVoter ?? true,
-          ]
-        );
-        residentId = insertResident.rows[0].id;
-      }
-
-      // 3. Fetch role_id for 'resident'
       const roleRow = await client.query(
         `SELECT id FROM barangay.roles WHERE name = 'resident'`
       );
       const roleId = roleRow.rows[0]?.id || 1;
 
-      // 4. Hash password with bcryptjs
       const passwordHash = await bcrypt.hash(input.password, 10);
 
-      // 5. Create user record
       const insertUser = await client.query(
         `INSERT INTO barangay.users (
           role_id, resident_id, email, password_hash, is_active
@@ -263,7 +233,6 @@ export async function registerResident(
 
       const userId = insertUser.rows[0].id;
 
-      // 6. Generate Session Payload & Cookie
       const sessionPayload: SessionPayload = {
         userId,
         email,
@@ -273,7 +242,6 @@ export async function registerResident(
 
       await createSessionCookie(sessionPayload);
 
-      // 7. Audit log
       await client.query(
         `INSERT INTO barangay.audit_logs (user_id, action, entity_type, entity_id, new_values)
          VALUES ($1, 'USER_REGISTERED', 'users', $1, $2)`,
@@ -282,14 +250,14 @@ export async function registerResident(
           JSON.stringify({
             email,
             residentId,
-            fullName: `${input.firstName} ${input.lastName}`,
+            residentName: `${residentRecord.first_name} ${residentRecord.last_name}`,
           }),
         ]
       );
 
       return {
         success: true,
-        message: 'Account registered and resident profile linked successfully.',
+        message: 'Account created successfully and linked to the resident record.',
         data: { user: sessionPayload, residentId },
       };
     });
@@ -297,7 +265,7 @@ export async function registerResident(
     console.error('[auth.registerResident error]', error);
     return {
       success: false,
-      error: error?.message || 'Failed to complete registration.',
+      error: 'Account creation is temporarily unavailable. Please try again later or contact the Barangay Hall.',
     };
   }
 }

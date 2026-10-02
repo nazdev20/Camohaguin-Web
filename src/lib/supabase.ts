@@ -3,13 +3,17 @@
  * Uses project URL and publishable key
  */
 
-export const SUPABASE_URL = 
-  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_URL) ||
-  'https://cbcvhmvdaujhbquryaom.supabase.co';
+const configuredSupabaseUrl =
+  typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_URL;
 
-export const SUPABASE_PUBLISHABLE_KEY = 
-  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
-  'sb_publishable_hBItT31I4RBvcksW7tMRyw_kfEnFZbB';
+export const SUPABASE_URL = configuredSupabaseUrl
+  ? configuredSupabaseUrl.replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '')
+  : '';
+
+export const SUPABASE_PUBLISHABLE_KEY =
+  typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    : '';
 
 export const SUPABASE_REST_ENDPOINT = `${SUPABASE_URL.replace(/\/+$/, '')}/rest/v1`;
 
@@ -26,7 +30,20 @@ export interface SupabaseHealth {
  * Check connection status to the Supabase REST endpoint
  */
 export async function checkSupabaseConnection(): Promise<SupabaseHealth> {
-  const keyPreview = `${SUPABASE_PUBLISHABLE_KEY.slice(0, 14)}...${SUPABASE_PUBLISHABLE_KEY.slice(-6)}`;
+  const keyPreview = SUPABASE_PUBLISHABLE_KEY
+    ? `${SUPABASE_PUBLISHABLE_KEY.slice(0, 14)}...${SUPABASE_PUBLISHABLE_KEY.slice(-6)}`
+    : '';
+
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+    return {
+      connected: false,
+      status: 'error',
+      message: 'Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
+      url: SUPABASE_URL,
+      keyPreview,
+    };
+  }
+
   try {
     const res = await fetch(`${SUPABASE_REST_ENDPOINT}/services?select=*`, {
       headers: {
@@ -91,6 +108,13 @@ export async function supabaseRestQuery<T = any>(
     body?: any;
   }
 ): Promise<{ data: T | null; error: string | null }> {
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+    return {
+      data: null,
+      error: 'Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
+    };
+  }
+
   try {
     const schema = options?.schema || 'public';
     const select = options?.select || '*';

@@ -16,19 +16,33 @@ export const MyRequests: React.FC<MyRequestsProps> = ({
   const [manualInput, setManualInput] = useState('');
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('bc_my_requests') || '[]');
-      if (Array.isArray(stored) && stored.length > 0) {
-        setCachedTrackingNumbers(stored);
-      } else {
-        // Default with 2 demo requests so the user sees immediate history
+    const loadTrackingNumbers = async () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('bc_my_requests') || '[]');
+        if (Array.isArray(stored) && stored.length > 0) {
+          setCachedTrackingNumbers(stored);
+          return;
+        }
+
+        const response = await fetch('/api/applications?mine=true');
+        const payload = await response.json();
+        const dbTracking = Array.isArray(payload?.data) ? payload.data.map((item: any) => item.tracking_number) : [];
+
+        if (dbTracking.length > 0) {
+          setCachedTrackingNumbers(dbTracking);
+          localStorage.setItem('bc_my_requests', JSON.stringify(dbTracking));
+          return;
+        }
+
         const demoDefaults = ['BC-2026-0928-1002', 'BC-2026-0928-1003'];
         setCachedTrackingNumbers(demoDefaults);
         localStorage.setItem('bc_my_requests', JSON.stringify(demoDefaults));
+      } catch (e) {
+        console.warn('Storage read error', e);
       }
-    } catch (e) {
-      console.warn('Storage read error', e);
-    }
+    };
+
+    loadTrackingNumbers();
   }, []);
 
   const currentCitizen = BarangayDatabase.getCurrentCitizen();

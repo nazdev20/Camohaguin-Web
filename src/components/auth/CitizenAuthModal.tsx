@@ -15,8 +15,8 @@ import {
   UserPlus,
   LogIn
 } from 'lucide-react';
-import { BarangayDatabase } from '../../services/db';
 import { BarangayService, Resident } from '../../types/schema';
+import { getCurrentUserProfile, login, registerResident } from '../../app/actions/auth';
 
 interface CitizenAuthModalProps {
   isOpen: boolean;
@@ -42,104 +42,107 @@ export const CitizenAuthModal: React.FC<CitizenAuthModalProps> = ({
   const [loginSuccessMessage, setLoginSuccessMessage] = useState<string | null>(null);
 
   // Register form state
-  const [firstName, setFirstName] = useState('');
-  const [middleName, setMiddleName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [suffix, setSuffix] = useState('');
-  const [birthDate, setBirthDate] = useState('1995-01-01');
-  const [gender, setGender] = useState('Female');
-  const [contactNumber, setContactNumber] = useState('');
+  const [residentId, setResidentId] = useState('');
   const [email, setEmail] = useState('');
-  const [purokZone, setPurokZone] = useState('Purok 1');
-  const [address, setAddress] = useState('');
   const [password, setPassword] = useState('');
-  const [certifyResident, setCertifyResident] = useState(true);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
+  const mapDbProfileToSchemaResident = (profile: any): Resident => ({
+    resident_id: profile.id || profile.resident_id || `BC-RES-${Date.now()}`,
+    household_id: profile.household_id || undefined,
+    first_name: profile.first_name || '',
+    middle_name: profile.middle_name || undefined,
+    last_name: profile.last_name || '',
+    suffix: profile.suffix || undefined,
+    birth_date: profile.date_of_birth || profile.birth_date || '',
+    gender: profile.sex === 'male' ? 'Male' : profile.sex === 'female' ? 'Female' : 'Other',
+    civil_status: profile.civil_status || 'Single',
+    contact_number: profile.contact_number || undefined,
+    email: profile.email_address || profile.email || undefined,
+    address: profile.street_address || profile.address || '',
+    purok_zone: profile.purok || profile.purok_zone || 'Purok 1',
+    is_registered_voter: profile.is_voter ?? false,
+    residency_status: (profile.residency_status || 'unverified') as Resident['residency_status'],
+    verified_at: profile.verified_at,
+    verified_by_user_id: profile.verified_by_user_id,
+    remarks: profile.remarks,
+    created_at: profile.created_at || new Date().toISOString(),
+    updated_at: profile.updated_at || new Date().toISOString(),
+  });
+
   // Handle Login
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
     if (!loginIdentifier.trim()) {
-      setLoginError('Please enter your email, mobile number, or Resident ID.');
+      setLoginError('Please enter your registered email address.');
       return;
     }
 
-    const result = BarangayDatabase.loginCitizen(loginIdentifier, loginPassword);
-    if (result.success && result.resident) {
-      setLoginSuccessMessage(result.message);
-      setTimeout(() => {
-        onSuccess(result.resident!);
-        onClose();
-      }, 500);
-    } else {
-      setLoginError(result.message);
-    }
-  };
+    try {
+      const result = await login(loginIdentifier.trim(), loginPassword);
+      if (result.success && result.data?.user) {
+        const profile = await getCurrentUserProfile();
+        const resident = profile.resident ? mapDbProfileToSchemaResident(profile.resident) : null;
 
-  // Quick Demo Login Handler
-  const handleQuickDemoLogin = (identifier: string) => {
-    setLoginError(null);
-    const result = BarangayDatabase.loginCitizen(identifier);
-    if (result.success && result.resident) {
-      setLoginSuccessMessage(`Logging in as ${result.resident.first_name} ${result.resident.last_name}...`);
-      setTimeout(() => {
-        onSuccess(result.resident!);
-        onClose();
-      }, 400);
+        setLoginSuccessMessage(result.message || 'Login successful.');
+        setTimeout(() => {
+          if (resident) {
+            onSuccess(resident);
+          }
+          onClose();
+        }, 500);
+      } else {
+        setLoginError(result.error || 'Login failed.');
+      }
+    } catch (error: any) {
+      setLoginError(error?.message || 'Login failed.');
     }
   };
 
   // Handle Registration
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegisterError(null);
 
-    if (!firstName.trim() || !lastName.trim()) {
-      setRegisterError('First Name and Last Name are required.');
-      return;
-    }
-    if (!contactNumber.trim()) {
-      setRegisterError('Contact mobile number is required.');
+    if (!residentId.trim()) {
+      setRegisterError('Resident ID is required.');
       return;
     }
     if (!email.trim() || !email.includes('@')) {
       setRegisterError('A valid email address is required.');
       return;
     }
-    if (!address.trim()) {
-      setRegisterError('House/Street address in Barangay Camohaguin is required.');
-      return;
-    }
-    if (!certifyResident) {
-      setRegisterError('Please confirm that you reside in Barangay Camohaguin.');
+    if (!password.trim()) {
+      setRegisterError('Password is required.');
       return;
     }
 
-    const result = BarangayDatabase.registerCitizen({
-      first_name: firstName,
-      middle_name: middleName,
-      last_name: lastName,
-      suffix,
-      birth_date: birthDate,
-      gender,
-      contact_number: contactNumber,
-      email,
-      address,
-      purok_zone: purokZone,
-    });
+    try {
+      const result = await registerResident({
+        residentId: residentId.trim(),
+        email: email.trim(),
+        password: password,
+      });
 
-    if (result.success && result.resident) {
-      setLoginSuccessMessage(result.message);
-      setTimeout(() => {
-        onSuccess(result.resident);
-        onClose();
-      }, 600);
-    } else {
-      setRegisterError(result.message || 'Registration failed.');
+      if (result.success && result.data?.residentId) {
+        const profile = await getCurrentUserProfile();
+        const resident = profile.resident ? mapDbProfileToSchemaResident(profile.resident) : null;
+        setLoginSuccessMessage(result.message || 'Account created successfully.');
+        setTimeout(() => {
+          if (resident) {
+            onSuccess(resident);
+          }
+          onClose();
+        }, 600);
+      } else {
+        setRegisterError(result.error || 'Registration failed.');
+      }
+    } catch (error: any) {
+      setRegisterError(error?.message || 'Registration failed.');
     }
   };
 
@@ -252,13 +255,13 @@ export const CitizenAuthModal: React.FC<CitizenAuthModalProps> = ({
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">
-                    You can enter your registered email, contact number, or ID (e.g. BC-RES-00101).
+                    Use the email address you registered with your barangay account.
                   </span>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Password / Account PIN
+                    Password
                   </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -284,51 +287,12 @@ export const CitizenAuthModal: React.FC<CitizenAuthModalProps> = ({
                 </button>
               </form>
 
-              {/* Fast One-Click Demo Residents */}
-              <div className="pt-4 border-t border-slate-100">
-                <div className="flex items-center gap-1.5 mb-2.5">
+              <div className="pt-4 border-t border-slate-100 text-[11px] text-slate-500">
+                <div className="flex items-center gap-1.5 mb-1">
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                    Quick 1-Click Demo Residents
-                  </span>
+                  <span className="font-bold uppercase tracking-wider text-slate-600">Real Account Access</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin('juan.delacruz@gmail.com')}
-                    className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/60 transition group"
-                  >
-                    <div className="font-bold text-slate-800 group-hover:text-emerald-900 flex items-center justify-between">
-                      <span>Juan Dela Cruz</span>
-                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">Purok 1</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500">Verified Citizen • Household Head</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin('maria.cruz@gmail.com')}
-                    className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/60 transition group"
-                  >
-                    <div className="font-bold text-slate-800 group-hover:text-emerald-900 flex items-center justify-between">
-                      <span>Maria Santos Cruz</span>
-                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">Purok 1</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500">Verified Citizen • BHW Volunteer</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin('eduardo.reyes@yahoo.com')}
-                    className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/60 transition group sm:col-span-2"
-                  >
-                    <div className="font-bold text-slate-800 group-hover:text-emerald-900 flex items-center justify-between">
-                      <span>Eduardo Alvarez Reyes Jr.</span>
-                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">Purok 2</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500">Verified Citizen • Senior Member</span>
-                  </button>
-                </div>
+                Use your registered barangay email account and password. This authentication is validated against the live database session.
               </div>
             </div>
           )}
@@ -343,178 +307,50 @@ export const CitizenAuthModal: React.FC<CitizenAuthModalProps> = ({
                 </div>
               )}
 
-              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <div className="col-span-2 sm:col-span-2">
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      First Name *
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Maria"
-                      value={firstName}
-                      onChange={e => setFirstName(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Middle Name
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Santos"
-                      value={middleName}
-                      onChange={e => setMiddleName(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Suffix
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Jr., III"
-                      value={suffix}
-                      onChange={e => setSuffix(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                    />
-                  </div>
+              <form onSubmit={handleRegisterSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Resident ID *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter resident ID from the barangay registry"
+                    value={residentId}
+                    onChange={e => setResidentId(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none uppercase"
+                    required
+                  />
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    The system will verify that this ID exists in the resident table and matches the email below.
+                  </span>
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Last Name *
+                    Email Address *
                   </label>
                   <input
-                    type="text"
-                    placeholder="e.g. Cruz"
-                    value={lastName}
-                    onChange={e => setLastName(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
                     required
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Date of Birth *
-                    </label>
-                    <input
-                      type="date"
-                      value={birthDate}
-                      onChange={e => setBirthDate(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Gender
-                    </label>
-                    <select
-                      value={gender}
-                      onChange={e => setGender(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none bg-white"
-                    >
-                      <option value="Female">Female</option>
-                      <option value="Male">Male</option>
-                      <option value="Other">Other / Prefer not to say</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Mobile Contact Number *
-                    </label>
-                    <input
-                      type="tel"
-                      placeholder="0917-123-4567"
-                      value={contactNumber}
-                      onChange={e => setContactNumber(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Email Address *
-                    </label>
-                    <input
-                      type="email"
-                      placeholder="name@email.com"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Purok / Zone *
-                    </label>
-                    <select
-                      value={purokZone}
-                      onChange={e => setPurokZone(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none bg-white"
-                    >
-                      <option value="Purok 1">Purok 1 (Sentro)</option>
-                      <option value="Purok 2">Purok 2 (Kanluran)</option>
-                      <option value="Purok 3">Purok 3 (Silangan)</option>
-                      <option value="Purok 4">Purok 4 (Ilaya)</option>
-                      <option value="Purok 5">Purok 5 (Ibaba)</option>
-                      <option value="Purok 6">Purok 6 (Tabing-Dagat)</option>
-                      <option value="Purok 7">Purok 7 (Bukid)</option>
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      House No. & Street Address *
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 142 Rizal Street"
-                      value={address}
-                      onChange={e => setAddress(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
-                      required
-                    />
-                  </div>
-                </div>
-
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Password / PIN
+                    Password *
                   </label>
                   <input
                     type="password"
-                    placeholder="Create a password"
+                    placeholder="Create password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-600 focus:outline-none"
+                    required
                   />
-                </div>
-
-                <div className="pt-1">
-                  <label className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={certifyResident}
-                      onChange={e => setCertifyResident(e.target.checked)}
-                      className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-600 mt-0.5"
-                    />
-                    <span className="text-[11px] text-slate-600 leading-tight">
-                      I declare that I am a bonafide resident of <strong>Barangay Camohaguin, Gumaca, Quezon</strong> and information provided is accurate and authentic.
-                    </span>
-                  </label>
                 </div>
 
                 <button
@@ -522,7 +358,7 @@ export const CitizenAuthModal: React.FC<CitizenAuthModalProps> = ({
                   className="w-full bg-emerald-800 hover:bg-emerald-900 text-amber-300 font-bold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-sm"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>Create Account & Continue</span>
+                  <span>Create Resident Account</span>
                 </button>
               </form>
             </div>

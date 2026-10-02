@@ -38,18 +38,61 @@ export const TrackRequest: React.FC<TrackRequestProps> = ({
     }
   }, [initialTracking]);
 
-  const handleSearch = (queryToUse?: string) => {
+  const handleSearch = async (queryToUse?: string) => {
     const q = (queryToUse || searchQuery).trim().toUpperCase();
     if (!q) return;
 
-    const found = BarangayDatabase.getRequestByTracking(q);
-    if (found) {
-      setRequest(found);
-      setNotFound(false);
-    } else {
-      setRequest(null);
-      setNotFound(true);
+    try {
+      const response = await fetch(`/api/applications?trackingNumber=${encodeURIComponent(q)}`);
+      const payload = await response.json();
+      const found = payload?.data?.application || BarangayDatabase.getRequestByTracking(q);
+
+      if (found) {
+        const mapped = found.application
+          ? {
+              tracking_number: found.application.tracking_number,
+              service_id: found.application.service_id,
+              service_name: found.application.service_name || 'Barangay Service',
+              resident_id: found.application.resident_id || undefined,
+              applicant_first_name: found.application.first_name || '',
+              applicant_last_name: found.application.last_name || '',
+              applicant_contact: found.application.contact_number || '',
+              applicant_email: found.application.email_address || undefined,
+              purok_zone: found.application.purok || '',
+              address: found.application.street_address || '',
+              purpose: found.application.purpose,
+              residency_verified: Boolean(found.application.resident_id),
+              status: found.application.status === 'submitted' ? 'Submitted' :
+                found.application.status === 'under_review' ? 'Under Review' :
+                found.application.status === 'for_compliance' ? 'For Correction' :
+                found.application.status === 'approved' ? 'Approved' :
+                found.application.status === 'rejected' ? 'Rejected' :
+                found.application.status === 'ready_for_release' ? 'Ready for Release' :
+                found.application.status === 'released' ? 'Completed' : 'Submitted',
+              admin_remarks: found.application.staff_notes || 'Application received.',
+              target_release_date: found.application.released_at || undefined,
+              created_at: found.application.submitted_at,
+              updated_at: found.application.submitted_at,
+            }
+          : found;
+
+        setRequest(mapped as ServiceRequest);
+        setNotFound(false);
+        return;
+      }
+    } catch (error) {
+      console.warn('[TrackRequest] DB lookup failed, falling back to local cache', error);
     }
+
+    const localFound = BarangayDatabase.getRequestByTracking(q);
+    if (localFound) {
+      setRequest(localFound);
+      setNotFound(false);
+      return;
+    }
+
+    setRequest(null);
+    setNotFound(true);
   };
 
   // Status visual mapping

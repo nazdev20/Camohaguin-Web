@@ -1,0 +1,2 @@
+-- Initial migration for the Barangay Prisma schema.
+-- This project is currently using an empty schema definition, so no table changes are required yet.
